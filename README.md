@@ -474,6 +474,53 @@ class ScoreDAO:
 - config_value (配置值)
 ```
 
+## 安全性
+
+### ✅ 安全最佳实践
+
+本项目已实施以下安全措施：
+
+**1. 敏感信息管理**
+- ✅ 所有密码和密钥存储在 `.env` 文件（不提交到版本控制）
+- ✅ 数据库用户使用独立账户（非 root）
+- ✅ `.gitignore` 防止 `.env` 被意外提交
+
+**2. 密码存储**
+- ⚠️ 当前使用明文密码存储（仅用于教学演示）
+- 📝 **生产环境建议**：使用 bcrypt 加密密码
+
+```python
+# ❌ 明文存储（当前）
+password = '123456'
+
+# ✅ 加密存储（生产环议）
+from bcrypt import hashpw, checkpw, gensalt
+hashed = hashpw(password.encode(), gensalt())
+```
+
+**3. 日志安全**
+- ✅ 移除了所有在日志中暴露密码的代码
+- ✅ 日志仅记录必要的非敏感信息
+- ✅ 支持日志级别控制
+
+**4. 输入验证**
+- ✅ 所有用户输入都进行验证
+- ✅ 数据库查询使用参数化防止 SQL 注入
+- ✅ 成绩范围验证（0-100）
+
+### 🔒 部署前检查清单
+
+部署到生产环境前，请确保：
+
+- [ ] `.env` 文件已配置，且包含强密码（12位以上）
+- [ ] `.env` 文件已加入 `.gitignore`
+- [ ] 数据库用户权限已限制（非 root）
+- [ ] 启用 HTTPS 加密传输（如有网络通信）
+- [ ] 定期备份数据库
+- [ ] 检查日志文件是否包含敏感信息
+- [ ] 考虑使用密码加密库（bcrypt）
+- [ ] 定期更新依赖包
+
 ---
 
 ## 安全性
@@ -506,6 +553,94 @@ password = '159298687187xxx'  # 不要这样做！
 - ✅ 定期备份数据库
 - ✅ 限制数据库用户权限（不要使用 root 账户）
 - ✅ 对用户输入进行验证和清理
+
+---
+
+## 配置管理
+
+### 环境变量配置
+
+系统采用环境变量管理敏感配置，确保代码安全。
+
+**配置步骤：**
+
+1. **复制配置模板**
+```bash
+cp .env.example .env
+```
+
+2. **编辑 .env 文件**
+```env
+# 数据库配置
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=sgs_user
+DB_PASSWORD=your_strong_database_password
+DB_NAME=student_grade_system
+DB_CHARSET=utf8mb4
+
+# 应用配置
+DEBUG=False
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+```
+
+3. **验证配置**
+```bash
+python -c "from config import Config; Config.validate()"
+```
+
+### 常量定义
+
+所有的系统常量已集中定义在 [constants.py](constants.py) 中：
+
+```python
+from constants import (
+    ScoreStatus,      # 成绩状态：draft, submitted, approved, rejected
+    UserRole,         # 用户角色：admin, teacher, student
+    UserStatus,       # 用户状态：active(1), disabled(0)
+    ScoreCalculation, # 成绩计算规则和权重
+    ValidationRules,  # 数据验证规则
+    ErrorMessage,     # 错误消息
+    SuccessMessage    # 成功消息
+)
+```
+
+**使用示例：**
+```python
+# ✅ 推荐用法：使用常量
+from constants import ScoreStatus
+status = ScoreStatus.SUBMITTED
+
+# ❌ 避免这样做：硬编码字符串
+status = 'submitted'
+```
+
+### 日志配置
+
+日志系统已在 [logging_config.py](logging_config.py) 中统一配置。
+
+**在应用启动时初始化：**
+```python
+from logging_config import configure_logging
+from dao.score_dao import ScoreDAO
+
+# 先配置日志
+configure_logging()
+
+# 然后使用DAO
+score_dao = ScoreDAO()
+```
+
+日志将输出到：
+- **控制台** - 实时查看
+- **文件** - `logs/app.log` 持久化保存
+
+**日志级别设置：**
+在 `.env` 文件中配置：
+```env
+LOG_LEVEL=DEBUG    # DEBUG/INFO/WARNING/ERROR/CRITICAL
+```
 
 ---
 

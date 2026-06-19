@@ -3,8 +3,13 @@ ScoreDAO - 成绩数据访问对象
 实现成绩的增删改查功能
 """
 
-from dao.db import DBConnection, DB_CONFIG
+from dao.db import DBConnection
+from config import Config
+from constants import ScoreStatus, ValidationRules, ScoreCalculation, ErrorMessage
 from typing import Optional, Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ScoreDAO:
@@ -25,9 +30,9 @@ class ScoreDAO:
         初始化ScoreDAO
 
         Args:
-            db_config: 数据库配置字典
+            db_config: 数据库配置字典，若不提供则使用默认配置
         """
-        self.db_config = db_config or DB_CONFIG
+        self.db_config = db_config or Config.get_db_config()
 
     def insert_score(
         self,
@@ -54,8 +59,17 @@ class ScoreDAO:
             input_by: 录入人ID
 
         Returns:
-            int: 影响行数
+            int: 影响行数，0表示插入失败
         """
+        # 输入验证
+        if not self._validate_score_inputs(daily_score, midterm_score, final_score):
+            logger.error(f"成绩数据验证失败: daily={daily_score}, midterm={midterm_score}, final={final_score}")
+            return 0
+
+        if student_id <= 0 or subject_id <= 0:
+            logger.error(f"无效的学生ID或科目ID: student_id={student_id}, subject_id={subject_id}")
+            return 0
+
         with DBConnection(**self.db_config) as db:
             sql = """
                 INSERT INTO score 
@@ -65,9 +79,14 @@ class ScoreDAO:
             """
             params = (
                 student_id, subject_id, daily_score, midterm_score, final_score,
-                total_score, gpa_point, 'submitted', input_by
+                total_score, gpa_point, ScoreStatus.SUBMITTED, input_by
             )
-            return db.execute_update(sql, params)
+            affected_rows = db.execute_update(sql, params)
+            if affected_rows > 0:
+                logger.info(f"成绩已录入: student_id={student_id}, subject_id={subject_id}")
+            else:
+                logger.error(f"成绩录入失败: student_id={student_id}, subject_id={subject_id}")
+            return affected_rows
 
     def update_score(
         self,
@@ -89,11 +108,24 @@ class ScoreDAO:
             final_score: 期末成绩
             total_score: 总评成绩
             gpa_point: 绩点
-            status: 状态
+            status: 状态（使用 ScoreStatus 中定义的常量）
 
         Returns:
-            int: 影响行数
+            int: 影响行数，0表示无更新或失败
         """
+        # 输入验证
+        if score_id <= 0:
+            logger.error(f"无效的成绩ID: {score_id}")
+            return 0
+
+        if not self._validate_score_inputs(daily_score, midterm_score, final_score):
+            logger.error(f"成绩数据验证失败: daily={daily_score}, midterm={midterm_score}, final={final_score}")
+            return 0
+
+        if status and status not in ScoreStatus.ALL_STATUSES:
+            logger.error(f"无效的成绩状态: {status}")
+            return 0
+
         with DBConnection(**self.db_config) as db:
             # 构建动态SQL
             fields = []
@@ -119,12 +151,18 @@ class ScoreDAO:
                 params.append(status)
 
             if not fields:
+                logger.warning(f"没有要更新的字段: score_id={score_id}")
                 return 0
 
             sql = f"UPDATE score SET {', '.join(fields)} WHERE score_id = %s"
             params.append(score_id)
 
-            return db.execute_update(sql, tuple(params))
+            affected_rows = db.execute_update(sql, tuple(params))
+            if affected_rows > 0:
+                logger.info(f"成绩已更新: score_id={score_id}")
+            else:
+                logger.warning(f"成绩更新失败或无记录: score_id={score_id}")
+            return affected_rows
 
     def delete_score(self, score_id: int) -> int:
         """
@@ -272,20 +310,29 @@ class ScoreDAO:
         Returns:
             Dict: 统计信息（平均分、最高分、最低分、及格率等）
         """
+        if subject_id <= 0:
+            logger.error(f"无效的科目ID: {subject_id}")
+            return None
+
         with DBConnection(**self.db_config) as db:
-            sql = """
+            sql = f"""
                 SELECT 
                     COUNT(*) as total_count,
                     ROUND(AVG(total_score), 2) as avg_score,
                     MAX(total_score) as max_score,
                     MIN(total_score) as min_score,
-                    SUM(CASE WHEN total_score >= 60 THEN 1 ELSE 0 END) as pass_count,
-                    ROUND(SUM(CASE WHEN total_score >= 60 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as pass_rate
+                    SUM(CASE WHEN total_score >= {ScoreCalculation.PASS_SCORE} THEN 1 ELSE 0 END) as pass_count,
+                    ROUND(SUM(CASE WHEN total_score >= {ScoreCalculation.PASS_SCORE} THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as pass_rate
                 FROM score
-                WHERE subject_id = %s AND status = 'approved'
+                WHERE subject_id = %s AND status = %s
             """
-            result = db.execute_query(sql, (subject_id,))
-            return result[0] if result else None
+            result = db.execute_query(sql, (subject_id, ScoreStatus.APPROVED))
+            if result:
+                logger.info(f"获取科目统计信息: subject_id={subject_id}")
+                return result[0]
+            else:
+                logger.warning(f"未获取到科目统计信息: subject_id={subject_id}")
+                return None
 
     def get_student_gpa(self, student_id: int) -> Optional[float]:
         """
@@ -297,11 +344,55 @@ class ScoreDAO:
         Returns:
             float: 平均绩点
         """
+        if student_id <= 0:
+            logger.error(f"无效的学生ID: {student_id}")
+            return 0.0
+
         with DBConnection(**self.db_config) as db:
-            sql = """
+            sql = f"""
                 SELECT ROUND(AVG(gpa_point), 2) as avg_gpa
                 FROM score
-                WHERE student_id = %s AND status = 'approved'
+                WHERE student_id = %s AND status = %s
             """
-            result = db.execute_query(sql, (student_id,))
-            return result[0]['avg_gpa'] if result and result[0]['avg_gpa'] else 0.0
+            result = db.execute_query(sql, (student_id, ScoreStatus.APPROVED))
+            if result and result[0]['avg_gpa']:
+                logger.info(f"获取学生GPA: student_id={student_id}")
+                return result[0]['avg_gpa']
+            else:
+                logger.warning(f"未获取到学生GPA数据: student_id={student_id}")
+                return 0.0
+
+    @staticmethod
+    def _validate_score_inputs(
+        daily_score: Optional[float] = None,
+        midterm_score: Optional[float] = None,
+        final_score: Optional[float] = None
+    ) -> bool:
+        """
+        验证成绩输入的合法性
+
+        Args:
+            daily_score: 平时成绩
+            midterm_score: 期中成绩
+            final_score: 期末成绩
+
+        Returns:
+            bool: 验证通过返回True，否则False
+        """
+        scores = [daily_score, midterm_score, final_score]
+
+        for score in scores:
+            if score is None:
+                continue
+            
+            # 检查类型
+            if not isinstance(score, (int, float)):
+                logger.error(f"{ErrorMessage.INVALID_SCORE_TYPE}: {score}")
+                return False
+            
+            # 检查范围
+            if score < ScoreCalculation.MIN_SCORE or score > ScoreCalculation.MAX_SCORE:
+                logger.error(f"{ErrorMessage.INVALID_SCORE_RANGE}: {score}")
+                return False
+
+        return True

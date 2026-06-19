@@ -9,8 +9,9 @@ from mysql.connector import Error
 from typing import List, Dict, Any, Optional, Union, Tuple
 import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 库代码应该使用 NullHandler，让应用程序控制日志配置
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 class DBConnection:
@@ -30,7 +31,7 @@ class DBConnection:
         host: str = 'localhost',
         port: int = 3306,
         user: str = 'root',
-        password: str = '15929867187xxx',
+        password: str = '',
         database: str = 'student_grade_system',
         charset: str = 'utf8mb4'
     ):
@@ -49,7 +50,7 @@ class DBConnection:
             'host': host,
             'port': port,
             'user': user,
-            'password': '15929867187xxx',
+            'password': password,
             'database': database,
             'charset': charset,
             'autocommit': False
@@ -154,16 +155,18 @@ class DBConnection:
     def close(self) -> None:
         """关闭数据库连接"""
         try:
-            if self._cursor:
+            if hasattr(self, '_cursor') and self._cursor:
                 self._cursor.close()
-            if self._conn:
+            if hasattr(self, '_conn') and self._conn:
                 self._conn.close()
             logger.info("数据库连接已关闭")
         except Error as e:
             logger.error(f"关闭连接时发生错误: {e}")
         finally:
-            self._cursor = None
-            self._conn = None
+            if hasattr(self, '_cursor'):
+                self._cursor = None
+            if hasattr(self, '_conn'):
+                self._conn = None
 
     def __enter__(self):
         """上下文管理器入口"""
@@ -173,25 +176,15 @@ class DBConnection:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         if exc_type is not None:
-            self._conn.rollback() if self._conn else None
+            if hasattr(self, '_conn') and self._conn:
+                self._conn.rollback()
         else:
-            self._conn.commit() if self._conn else None
+            if hasattr(self, '_conn') and self._conn:
+                self._conn.commit()
         self.close()
         return False
 
     def __del__(self):
         """析构函数"""
-        self.close()
-
-
-# =====================================================
-# 数据库配置（请根据您的环境修改）
-# =====================================================
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'root',
-    'password': 'Tt1751868410',  # ← 请修改为您的MySQL密码
-    'database': 'student_grade_system',
-    'charset': 'utf8mb4'
-}
+        if hasattr(self, 'close'):
+            self.close()
